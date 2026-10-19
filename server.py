@@ -123,7 +123,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        if self.path != '/api/recognize':
+        if self.path not in ('/api/recognize', '/api/corners', '/api/rectify'):
             return self.reply(404, {'error': '接口不存在。'})
         allowed = {f'127.0.0.1:{self.server.server_port}', f'localhost:{self.server.server_port}'}
         host = self.headers.get('Host', '')
@@ -138,7 +138,7 @@ class Handler(SimpleHTTPRequestHandler):
         if not 0 < size <= MAX_BYTES:
             return self.reply(413, {'error': '图片为空或超过 15 MB。'})
         data = self.rfile.read(size)
-        from PIL import Image
+        from PIL import Image, ImageOps
         import numpy as np
         try:
             with Image.open(io.BytesIO(data)) as picture:
@@ -146,9 +146,30 @@ class Handler(SimpleHTTPRequestHandler):
                     raise ValueError('图片格式不支持。')
                 if picture.width*picture.height > 25000000:
                     raise ValueError('图片尺寸超过 2500 万像素。')
-                image = np.array(picture.convert('RGB'))[:, :, ::-1].copy()
+                image = np.array(ImageOps.exif_transpose(picture).convert('RGB'))[:, :, ::-1].copy()
         except (ValueError, OSError, Image.DecompressionBombError) as error:
             return self.reply(400, {'error': '无法读取图片，或图片尺寸超限。'})
+        if self.path in ('/api/corners', '/api/rectify'):
+            from rectification import detect_corners, rectify
+            import cv2
+            try:
+                if self.path == '/api/corners':
+                    return self.reply(200, detect_corners(image))
+                corners = json.loads(self.headers.get('X-Document-Corners', 'null'))
+                corrected = rectify(image, corners)
+                ok, encoded = cv2.imencode('.png', corrected)
+                if not ok:
+                    raise ValueError('校正图像编码失败，请重试。')
+                body = encoded.tobytes()
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/png')
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            except ValueError as error:
+                return self.reply(422, {'error': str(error)})
         if not LOCK.acquire(blocking=False):
             return self.reply(503, {'error': '正在识别另一张图片，请稍后重试。'})
         try:
