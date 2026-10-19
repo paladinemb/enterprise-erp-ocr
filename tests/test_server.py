@@ -9,7 +9,7 @@ from pathlib import Path
 from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from server import Handler, html_rows, group_lines
+from server import Handler, html_rows, group_lines, read_footer
 
 
 class TableTests(unittest.TestCase):
@@ -17,12 +17,26 @@ class TableTests(unittest.TestCase):
         self.assertEqual(html_rows('<table><tr><th rowspan="2">编号</th><th colspan="2">明细</th></tr><tr><td>名称<br>规格</td><td>&lt;script&gt;</td></tr></table>'),
                          [['编号', '明细', ''], ['', '名称\n规格', '<script>']])
 
-    def test_discards_empty_detection_rows(self):
-        self.assertEqual(html_rows('<table><tr><td>物料</td></tr><tr><td></td></tr><tr><td>A001</td></tr></table>'), [['物料'], ['A001']])
+    def test_preserves_empty_table_rows(self):
+        self.assertEqual(html_rows('<table><tr><td>物料</td></tr><tr><td></td></tr><tr><td>A001</td></tr></table>'), [['物料'], [''], ['A001']])
 
     def test_ocr_fragments_are_grouped_by_row_before_header_split(self):
         boxes = [[[80,10],[120,10],[120,30],[80,30]], [[0,12],[60,12],[60,32],[0,32]], [[0,70],[60,70],[60,90],[0,90]]]
         self.assertEqual([line['text'] for line in group_lines(boxes, ['PO001','订单编号','日期'])], ['订单编号 PO001','日期'])
+
+    def test_red_date_overlay_does_not_mix_with_printed_footer(self):
+        import numpy as np
+        from types import SimpleNamespace
+        image = np.full((100,300,3),200,np.uint8)
+        image[70:85,200:280] = (0,0,240)
+        results = iter([
+            SimpleNamespace(txts=['2012 11 19']),
+            SimpleNamespace(boxes=[[[20,10],[100,10],[100,40],[20,40]],
+                                   [[400,10],[550,10],[550,40],[400,40]]],txts=['制单','602'])
+        ])
+        footer,warnings = read_footer(image,50,['混合文字'],lambda *args:next(results))
+        self.assertEqual(footer,['制单','红色日期标记：2012 11 19'])
+        self.assertTrue(warnings)
 
 
 class ApiTests(unittest.TestCase):
