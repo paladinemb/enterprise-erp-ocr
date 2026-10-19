@@ -21,15 +21,16 @@ async function select(file) {
   sourceWidth=test.naturalWidth;sourceHeight=test.naturalHeight;corners=[[0,0],[sourceWidth-1,0],[sourceWidth-1,sourceHeight-1],[0,sourceHeight-1]];
   $('image').src=url;$('drop').style.display='none';$('preview').style.display='block';$('filename').textContent=file.name;$('filemeta').textContent=`${test.naturalWidth} × ${test.naturalHeight}`;$('recognize').disabled=true;
   $('raw').value='';$('tablearea').replaceChildren();$('count').textContent='尚无识别结果';$('export').disabled=true;status('正在定位单据四角…');$('progress').style.display='none';
+  let autoCorrect=false;
   correctionMode(true);busy=true;['choose','replace','demo','rectify','use-original'].forEach(id=>$(id).disabled=true);
   try{
     const response=await fetch('/api/corners',{method:'POST',headers:{'Content-Type':file.type},body:file});
     if(!response.ok)throw Error('自动定位暂不可用，请手动调整四角。');
-    const data=await response.json();corners=data.corners;drawCorners();
-    status(data.detected?'已定位单据边界，请检查四角后点击“校正并预览”。':'未可靠定位纸张边缘，请手动调整四角；端正图片可直接使用原图。');
+    const data=await response.json();corners=data.corners;autoCorrect=data.detected;drawCorners();
+    if(!autoCorrect)status('未可靠定位纸张边缘，请手动调整四角；端正图片可直接使用原图。');
   }catch(error){status(error.message,true);}
   finally{busy=false;['choose','replace','demo','rectify','use-original'].forEach(id=>$(id).disabled=false);drawCorners();}
-
+  if(autoCorrect)await rectifyImage();
 }
 
 function drawCorners() {
@@ -54,7 +55,7 @@ document.querySelectorAll('.corner').forEach((button,i)=>{
 });
 $('use-original').onclick=()=>{if(busy)return;selected=original;$('image').src=originalURL;correctionMode(false);$('recognize').disabled=false;clearResult();status('已使用原图，点击“开始识别”。');};
 $('edit-corners').onclick=()=>{if(busy)return;correctionMode(true);status('正在调整原图四角，确认完整单据范围后重新校正。');};
-$('rectify').onclick=async()=>{
+async function rectifyImage(){
   if(busy||!original)return;busy=true;['rectify','use-original','replace','demo','choose'].forEach(id=>$(id).disabled=true);drawCorners();status('正在校正旋转与透视…');
   try{
     const response=await fetch('/api/rectify',{method:'POST',headers:{'Content-Type':original.type,'X-Document-Corners':JSON.stringify(corners)},body:original});
@@ -63,10 +64,11 @@ $('rectify').onclick=async()=>{
     try{await preview.decode();}catch(error){URL.revokeObjectURL(nextURL);throw Error('无法读取校正预览，请重试。');}
     if(objectURL!==originalURL)URL.revokeObjectURL(objectURL);objectURL=nextURL;selected=new File([blob],sourceName+'-校正.png',{type:'image/png'});
     $('image').src=nextURL;$('correction-stage').style.maxWidth=(480*preview.naturalWidth/preview.naturalHeight)+'px';correctionMode(false);clearResult();$('recognize').disabled=false;
-    $('filemeta').textContent=`校正后 ${preview.naturalWidth} × ${preview.naturalHeight}`;status('校正预览已就绪，请检查横竖方向及内容是否完整，再点击“开始识别”。');
+    $('filemeta').textContent=`校正后 ${preview.naturalWidth} × ${preview.naturalHeight}`;status('四角已校正，横竖方向已拉直。请检查内容是否完整，再点击“开始识别”；需要微调可重新调整四角。');
   }catch(error){status(error.message,true);}
   finally{busy=false;['rectify','use-original','replace','demo','choose'].forEach(id=>$(id).disabled=false);drawCorners();}
-};
+}
+$('rectify').onclick=rectifyImage;
 
 $('choose').onclick=$('replace').onclick=()=>$('file').click();
 $('file').onchange=e=>{select(e.target.files[0]);e.target.value='';};
