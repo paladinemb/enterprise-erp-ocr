@@ -7,6 +7,8 @@ from html.parser import HTMLParser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from document_layout import group_lines, find_grid, split_sections, read_grid, header_row_count, lineless_bounds
+
 ROOT = Path(__file__).resolve().parent
 MAX_BYTES = 15 * 1024 * 1024
 LOCK = threading.Lock()
@@ -53,22 +55,7 @@ def html_rows(html):
     height = max(r for r, c in parser.cells)+1
     width = max(c for r, c in parser.cells)+1
     rows = [[parser.cells.get((r, c), '').strip() for c in range(width)] for r in range(height)]
-    return [row for row in rows if any(row)]
-
-
-def group_lines(boxes, texts):
-    lines = []
-    items = sorted(zip(boxes, texts), key=lambda item: min(p[1] for p in item[0]))
-    for box, text in items:
-        top, bottom = min(p[1] for p in box), max(p[1] for p in box)
-        center = (top+bottom)/2
-        if not lines or abs(center-lines[-1]['center']) > (bottom-top)*0.6:
-            lines.append({'center': center, 'top': top, 'bottom': bottom, 'items': []})
-        lines[-1]['items'].append((min(p[0] for p in box), text))
-        lines[-1]['bottom'] = max(lines[-1]['bottom'], bottom)
-    for line in lines:
-        line['text'] = ' '.join(text for x, text in sorted(line['items']))
-    return lines
+    return rows
 
 
 def recognize(image):
@@ -79,34 +66,82 @@ def recognize(image):
 
     if 'ocr' not in ENGINES:
         ENGINES['ocr'] = RapidOCR()
-    if 'classifier' not in ENGINES:
-        ENGINES['classifier'] = TableCls()
     output = ENGINES['ocr'](image)
     if output.boxes is None or not output.txts:
         raise ValueError('未识别到文字，请换一张清晰、端正的单据。')
-    lines = group_lines(output.boxes, output.txts)
-    if len(lines) < 5:
-        raise ValueError('需包含四行单据信息及下方物料表格，请检查图片。')
-    # shortcut: 沿用前四行作为单据信息的业务规则；其他版式需增加字段定位。
-    crop_y = int((lines[3]['bottom']+lines[4]['top'])/2)
-    cropped = image[crop_y:]
-    ocr_result = []
-    for box, text, score in zip(output.boxes, output.txts, output.scores):
-        if min(p[1] for p in box) >= crop_y:
-            shifted = box.copy()
-            shifted[:, 1] -= crop_y
-            ocr_result.append([shifted, text, score])
-    kind, _ = ENGINES['classifier'](cropped)
-    if kind not in ENGINES:
-        ENGINES[kind] = (WiredTableRecognition(WiredTableInput()) if kind == 'wired'
-                         else LinelessTableRecognition(LinelessTableInput()))
-    result = ENGINES[kind](cropped, ocr_result=ocr_result)
-    rows = html_rows(result.pred_html or '')
+    grid = find_grid(image)
+    warnings = []
+    if grid:
+        bounds = grid['bounds']
+        rows, warnings = read_grid(image, grid, ENGINES['ocr'])
+        kind, engine = 'wired', 'RapidOCR + Grid'
+    else:
+        if 'classifier' not in ENGINES:
+            ENGINES['classifier'] = TableCls()
+        bounds = lineless_bounds(output.boxes, output.txts, image.shape)
+        left, top, right, bottom = bounds
+        cropped = image[top:bottom,left:right]
+        ocr_result = []
+        for box, text, score in zip(output.boxes, output.txts, output.scores):
+            center_y = sum(p[1] for p in box)/4
+            if top <= center_y <= bottom:
+                shifted = box.copy()
+                shifted[:,0] -= left
+                shifted[:,1] -= top
+                ocr_result.append([shifted, text, score])
+        kind, _ = ENGINES['classifier'](cropped)
+        if kind not in ENGINES:
+            ENGINES[kind] = (WiredTableRecognition(WiredTableInput()) if kind == 'wired'
+                             else LinelessTableRecognition(LinelessTableInput()))
+        result = ENGINES[kind](cropped, ocr_result=ocr_result)
+        rows = html_rows(result.pred_html or '')
+        while rows and not any(rows[0]):
+            rows.pop(0)
+        while rows and not any(rows[-1]):
+            rows.pop()
+        engine = 'TableStructureRec'
     if not rows:
         raise ValueError('未检测到表格结构，请使用清晰、端正的表格图片。')
-    headers = [[line['text']] for line in lines[:4]]
-    return {'rows': headers+rows, 'text': '\n'.join('\t'.join(row) for row in headers+rows),
-            'engine': 'TableStructureRec', 'table_type': kind}
+    header, footer = split_sections(output.boxes, output.txts, bounds)
+    footer, footer_warnings = read_footer(image, bounds[3], footer, ENGINES['ocr'])
+    warnings.extend(footer_warnings)
+    header_rows = header_row_count(rows)
+    if not header_rows:
+        warnings.append('未可靠确认列名，表格按原始行列保留，请核对表头。')
+    return {'header': header, 'rows': rows, 'footer': footer, 'header_rows': header_rows,
+            'warnings': warnings, 'text': '\n'.join('\t'.join(row) for row in rows),
+            'engine': engine, 'table_type': kind}
+
+
+def read_footer(image, bottom, fallback, ocr):
+    """Separate a red date overlay from overlapping dark footer print."""
+    import cv2
+    import numpy as np
+    import re
+    crop = image[int(bottom)+3:]
+    if not crop.size:
+        return fallback, []
+    red = crop[:,:,2].astype(int)-np.maximum(crop[:,:,0],crop[:,:,1]).astype(int) > 45
+    if np.count_nonzero(red) < 30:
+        return fallback, []
+    isolated = np.full_like(crop,255)
+    isolated[red] = 0
+    date = ocr(cv2.resize(isolated,None,fx=2,fy=2))
+    date_text = ' '.join(date.txts or [])
+    if not re.fullmatch(r'\d{4}\s*\d{1,2}\s*\d{1,2}',date_text):
+        return fallback, []
+    dark = cv2.adaptiveThreshold(crop[:,:,2],255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY,31,15)
+    printed = ocr(cv2.cvtColor(cv2.resize(dark,None,fx=2,fy=2),cv2.COLOR_GRAY2BGR))
+    red_x = np.flatnonzero(red.any(axis=0))
+    clear_boxes, clear_texts = [], []
+    if printed.boxes is not None:
+        for box,text in zip(printed.boxes,printed.txts):
+            center_x = sum(p[0] for p in box)/8
+            if not red_x[0]-15 <= center_x <= red_x[-1]+15:
+                clear_boxes.append(box)
+                clear_texts.append(text)
+    lines = [line['text'] for line in group_lines(clear_boxes,clear_texts)]
+    return lines+['红色日期标记：'+date_text], ['表尾日期栏与红色标记重叠，印刷文字未完全识别；红色日期单独列出，请核对原图。']
 
 
 class Handler(SimpleHTTPRequestHandler):
