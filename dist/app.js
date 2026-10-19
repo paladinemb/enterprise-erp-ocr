@@ -22,22 +22,18 @@ async function select(file) {
   $('image').src=url;$('drop').style.display='none';$('preview').style.display='block';$('filename').textContent=file.name;$('filemeta').textContent=`${test.naturalWidth} × ${test.naturalHeight}`;$('recognize').disabled=true;
   $('correction-stage').style.maxWidth=(480*test.naturalWidth/test.naturalHeight)+'px';
   tableHeaderRows=0;$('doc-header').value=$('doc-footer').value='';$('doc-header-section').hidden=$('doc-footer-section').hidden=true;$('warnings').hidden=true;$('warnings').textContent='';
-  $('raw').value='';$('tablearea').replaceChildren();$('count').textContent='尚无识别结果';$('export').disabled=true;status('正在自动定位单据四角…');$('progress').style.display='none';
+  $('raw').value='';$('tablearea').replaceChildren();$('count').textContent='尚无识别结果';$('export').disabled=true;status('正在检查文字方向，首次运行可能需要加载模型…');$('progress').style.display='none';
   busy=true;['choose','replace','demo'].forEach(id=>$(id).disabled=true);
   try{
-    const boundary=await fetch('/api/corners',{method:'POST',headers:{'Content-Type':file.type},body:file});
-    if(!boundary.ok)throw Error('自动定位四角失败，请重新上传图片。');
-    const data=await boundary.json();
-    if(!data.detected)throw Error('单据边界不可靠，无法自动定位四角。请上传边缘完整、背景清晰的图片。');
-    status('已定位四角，正在自动校正旋转与透视…');
-    const response=await fetch('/api/rectify',{method:'POST',headers:{'Content-Type':file.type,'X-Document-Corners':JSON.stringify(data.corners)},body:file});
-    if(!response.ok)throw Error('自动校正失败，请重新拍摄或更换图片。');
+    const response=await fetch('/api/align',{method:'POST',headers:{'Content-Type':file.type},body:file});
+    if(!response.ok){const data=await response.json();throw Error(data.error||'文字方向检查失败，请重试。');}
+    const alignment=JSON.parse(response.headers.get('X-Alignment'));
     const blob=await response.blob();const nextURL=URL.createObjectURL(blob);const preview=new Image();preview.src=nextURL;
     try{await preview.decode();}catch(error){URL.revokeObjectURL(nextURL);throw Error('无法读取校正预览，请重新上传图片。');}
     URL.revokeObjectURL(objectURL);objectURL=nextURL;selected=new File([blob],sourceName+'-校正.png',{type:'image/png'});
     $('image').src=nextURL;$('correction-stage').style.maxWidth=(480*preview.naturalWidth/preview.naturalHeight)+'px';$('recognize').disabled=false;
-    $('filemeta').textContent=`校正后 ${preview.naturalWidth} × ${preview.naturalHeight}`;status('已自动定位四角并校正，请检查预览后点击“开始识别”。');
-  }catch(error){status(error.message==='Failed to fetch'?'自动校正失败：无法连接本地服务，请重试。':error.message,true);}
+    $('filemeta').textContent=`${alignment.changed?'校正后':'原图'} ${preview.naturalWidth} × ${preview.naturalHeight}`;status(alignment.changed?`已按文字方向自动拉正（${alignment.angle.toFixed(1)}°），请检查预览后开始识别。`:'文字方向端正，无需校正，可直接开始识别。');
+  }catch(error){status(error.message==='Failed to fetch'?'文字方向检查失败：无法连接本地服务，请重试。':error.message,true);}
   finally{busy=false;['choose','replace','demo'].forEach(id=>$(id).disabled=false);}
 }
 
