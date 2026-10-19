@@ -58,6 +58,15 @@ def html_rows(html):
     return rows
 
 
+def align(image):
+    from rapidocr import RapidOCR
+    from rectification import align_text
+    if 'ocr' not in ENGINES:
+        ENGINES['ocr'] = RapidOCR(params={'Global.max_side_len':1280})
+    output = ENGINES['ocr'](image, use_rec=False, use_cls=False)
+    return align_text(image, output.boxes)
+
+
 def recognize(image):
     from rapidocr import RapidOCR
     from table_cls import TableCls
@@ -65,7 +74,7 @@ def recognize(image):
     from lineless_table_rec.main import LinelessTableInput, LinelessTableRecognition
 
     if 'ocr' not in ENGINES:
-        ENGINES['ocr'] = RapidOCR()
+        ENGINES['ocr'] = RapidOCR(params={'Global.max_side_len':1280})
     output = ENGINES['ocr'](image)
     if output.boxes is None or not output.txts:
         raise ValueError('未识别到文字，请换一张清晰、端正的单据。')
@@ -73,7 +82,7 @@ def recognize(image):
     warnings = []
     if grid:
         bounds = grid['bounds']
-        rows, warnings = read_grid(image, grid, ENGINES['ocr'])
+        rows, warnings = read_grid(grid.get('image',image), grid, ENGINES['ocr'])
         kind, engine = 'wired', 'RapidOCR + Grid'
     else:
         if 'classifier' not in ENGINES:
@@ -158,7 +167,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        if self.path not in ('/api/recognize', '/api/corners', '/api/rectify'):
+        if self.path not in ('/api/recognize', '/api/align'):
             return self.reply(404, {'error': '接口不存在。'})
         allowed = {f'127.0.0.1:{self.server.server_port}', f'localhost:{self.server.server_port}'}
         host = self.headers.get('Host', '')
@@ -184,31 +193,25 @@ class Handler(SimpleHTTPRequestHandler):
                 image = np.array(ImageOps.exif_transpose(picture).convert('RGB'))[:, :, ::-1].copy()
         except (ValueError, OSError, Image.DecompressionBombError) as error:
             return self.reply(400, {'error': '无法读取图片，或图片尺寸超限。'})
-        if self.path in ('/api/corners', '/api/rectify'):
-            from rectification import detect_corners, rectify
-            import cv2
-            try:
-                if self.path == '/api/corners':
-                    return self.reply(200, detect_corners(image))
-                corners = json.loads(self.headers.get('X-Document-Corners', 'null'))
-                corrected = rectify(image, corners)
-                ok, encoded = cv2.imencode('.png', corrected)
-                if not ok:
-                    raise ValueError('校正图像编码失败，请重试。')
-                body = encoded.tobytes()
-                self.send_response(200)
-                self.send_header('Content-Type', 'image/png')
-                self.send_header('Content-Length', str(len(body)))
-                self.send_header('Cache-Control', 'no-store')
-                self.end_headers()
-                self.wfile.write(body)
-                return
-            except ValueError as error:
-                return self.reply(422, {'error': str(error)})
         if not LOCK.acquire(blocking=False):
             return self.reply(503, {'error': '正在识别另一张图片，请稍后重试。'})
         try:
-            self.reply(200, recognize(image))
+            if self.path == '/api/align':
+                import cv2
+                corrected, info = align(image)
+                ok, encoded = cv2.imencode('.png', corrected)
+                if not ok:
+                    raise ValueError('文字方向校正图像编码失败，请重试。')
+                body = encoded.tobytes()
+                self.send_response(200)
+                self.send_header('Content-Type','image/png')
+                self.send_header('Content-Length',str(len(body)))
+                self.send_header('X-Alignment',json.dumps({'changed':info['changed'],'angle':info['angle']}))
+                self.send_header('Cache-Control','no-store')
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                self.reply(200, recognize(image))
         except ValueError as error:
             self.reply(422, {'error': str(error)})
         except Exception:
