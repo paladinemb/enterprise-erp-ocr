@@ -2,3 +2,4 @@ wired-table-rec==1.2.0
 lineless-table-rec==0.1.0
 table-cls==1.2.0
 rapidocr==2.1.0
+opencv-python>=4.10,<5
