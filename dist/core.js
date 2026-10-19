@@ -22,7 +22,7 @@ function mergeFirstRows(rows) {
   const fields = Array.from({ length: 4 }, (_, i) => {
     const row = rows[i] || [];
     const text = row.join(' ').trim();
-    const bilingualTitle = i === 0 && text.match(/^([\u4e00-\u9fff]+)\s+([A-Z][A-Z ]*)$/);
+    const bilingualTitle = i === 0 && text.match(/^([\u4e00-\u9fff]+)\s*([A-Z][A-Z ]*)$/);
     if (bilingualTitle) return [bilingualTitle[1], bilingualTitle[2].replace(/\s+/g, '')];
     const colon = text.match(/^(.+?)[：:]\s*(.*)$/);
     if (colon) return [colon[1].trim(), colon[2]];
