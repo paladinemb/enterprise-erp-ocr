@@ -48,7 +48,7 @@ def _positions(profile, threshold):
     return [int(round(group.mean())) for group in groups if len(group)]
 
 
-def find_grid(image):
+def find_grid(image, normalize=True):
     height, width = image.shape[:2]
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 31, 15)
@@ -67,6 +67,27 @@ def find_grid(image):
             if abs(xs[0]-x)>8 or abs(xs[-1]-(x+w))>8 or abs(ys[0]-y)>8 or abs(ys[-1]-(y+h))>8:
                 continue
             return {'xs': xs, 'ys': ys, 'bounds': (xs[0],ys[0],xs[-1],ys[-1])}
+    if normalize:
+        # Normalize the internal table grid for cell OCR; never crop the page preview.
+        for contour in sorted(contours,key=cv2.contourArea,reverse=True):
+            if cv2.contourArea(contour)<width*height*.08:
+                continue
+            polygon=cv2.approxPolyDP(contour,.02*cv2.arcLength(contour,True),True)
+            if len(polygon)!=4 or not cv2.isContourConvex(polygon):
+                continue
+            points=polygon.reshape(4,2).astype(np.float32)
+            center=points.mean(axis=0)
+            points=points[np.argsort(np.arctan2(points[:,1]-center[1],points[:,0]-center[0]))]
+            points=np.roll(points,-np.argmin(points.sum(axis=1)),axis=0)
+            edges=[np.linalg.norm(points[(i+1)%4]-points[i]) for i in range(4)]
+            w,h=int(max(edges[0],edges[2]))+12,int(max(edges[1],edges[3]))+12
+            target=np.float32([[5,5],[w-6,5],[w-6,h-6],[5,h-6]])
+            crop=cv2.warpPerspective(image,cv2.getPerspectiveTransform(points,target),(w,h),borderValue=(255,255,255))
+            grid=find_grid(crop,False)
+            if grid:
+                grid['image']=crop
+                grid['bounds']=(float(points[:,0].min()),float(points[:,1].min()),float(points[:,0].max()),float(points[:,1].max()))
+                return grid
     return None
 
 
