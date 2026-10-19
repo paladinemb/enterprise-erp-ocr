@@ -20,3 +20,4 @@ assert.deepEqual(mergeFirstRows(sample).map(row=>row.slice(0,4)), expected, 'sam
 console.log('PASS: manual first-four-column acceptance fixture');
 const rapidSample = require('./fixtures/rapid-result.json');
 assert.deepEqual(mergeFirstRows(rapidSample.rows.filter(row=>row.some(cell=>cell.trim()))).map(row=>row.slice(0,4)), expected, 'real RapidOCR labels without spaces must still split into title and value');
+assert.deepEqual(mergeFirstRows([['采购订单PURCHASEORDER']]).map(row=>row[0]), ['采购订单','PURCHASEORDER'], 'perspective-corrected OCR may omit the bilingual title separator');

@@ -55,6 +55,37 @@ class ApiTests(unittest.TestCase):
     def test_rejects_non_image(self):
         self.request_error(b'bad', {'Content-Type':'text/plain'}, 415)
 
+    def test_correction_endpoints_return_corners_and_png(self):
+        image = (Path(__file__).parent/'fixtures/example-purchase-order.png').read_bytes()
+        request = urllib.request.Request(self.url+'/api/corners', data=image, headers={'Content-Type':'image/png'})
+        with urllib.request.urlopen(request) as response:
+            result = json.load(response)
+        self.assertEqual(result['corners'], [[0,0],[1599,0],[1599,1049],[0,1049]])
+        request = urllib.request.Request(self.url+'/api/rectify', data=image,
+                  headers={'Content-Type':'image/png','X-Document-Corners':json.dumps(result['corners'])})
+        with urllib.request.urlopen(request) as response:
+            self.assertEqual(response.headers['Content-Type'], 'image/png')
+            self.assertTrue(response.read().startswith(b'\x89PNG'))
+
+    def test_phone_exif_orientation_matches_preview_coordinates(self):
+        from PIL import Image
+        picture = Image.new('RGB',(80,40),'white')
+        exif = picture.getexif()
+        exif[274] = 6
+        stream = io.BytesIO()
+        picture.save(stream,format='JPEG',exif=exif)
+        request = urllib.request.Request(self.url+'/api/corners', data=stream.getvalue(), headers={'Content-Type':'image/jpeg'})
+        with urllib.request.urlopen(request) as response:
+            self.assertEqual(json.load(response)['corners'], [[0,0],[39,0],[39,79],[0,79]])
+
+    def test_invalid_corners_return_actionable_error(self):
+        image = (Path(__file__).parent/'fixtures/example-purchase-order.png').read_bytes()
+        request = urllib.request.Request(self.url+'/api/rectify', data=image,
+                  headers={'Content-Type':'image/png','X-Document-Corners':'[[0,0]]'})
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request)
+        self.assertEqual(caught.exception.code, 422)
+
     def test_serves_only_frontend(self):
         with urllib.request.urlopen(self.url+'/') as response:
             self.assertIn('单据识别', response.read().decode())
