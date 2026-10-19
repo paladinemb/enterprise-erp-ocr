@@ -20,6 +20,18 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(len(grid['xs'])-1, 6)
         self.assertEqual(len(grid['ys'])-1, 9)
 
+    def test_tilted_internal_grid_is_read_without_paper_corners(self):
+        image = np.full((600,900,3),245,np.uint8)
+        for x in [40,120,340,500,600,700,850]:
+            cv2.line(image,(x,130),(x,490),(0,0,0),2)
+        for y in range(130,491,40):
+            cv2.line(image,(40,y),(850,y),(0,0,0),2)
+        rotated=cv2.warpAffine(image,cv2.getRotationMatrix2D((450,300),3,1),(900,600),borderValue=(245,245,245))
+        grid=find_grid(rotated)
+        self.assertIsNotNone(grid)
+        self.assertEqual(len(grid['xs'])-1,6)
+        self.assertEqual(len(grid['ys'])-1,9)
+
     def test_sections_follow_geometry_with_one_or_seven_heading_lines(self):
         for count in (1, 7):
             boxes = [[[10,y],[120,y],[120,y+10],[10,y+10]] for y in range(5, count*15, 15)]
