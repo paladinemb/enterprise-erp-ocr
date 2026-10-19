@@ -1,65 +1,39 @@
-"""Document plane correction using existing OpenCV dependency."""
+"""Align detected text directions without detecting or cropping paper edges."""
 import cv2
 import numpy as np
 
 
-def detect_corners(image):
-    height, width = image.shape[:2]
-    scale = min(1.0, 1200/max(height, width))
-    small = cv2.resize(image, (round(width*scale), round(height*scale)))
-    gray = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), (5,5), 0)
-    _, mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-    binaries = [mask, cv2.Canny(gray, 50, 150)]
-    # Color separates pale paper from a similarly bright desk when gray edges fail.
-    lab = cv2.cvtColor(small, cv2.COLOR_BGR2LAB)
-    kernel = np.ones((11,11), np.uint8)
-    for channel in (lab[:,:,1], lab[:,:,2]):
-        channel = cv2.GaussianBlur(channel,(9,9),0)
-        for threshold in np.unique(np.percentile(channel,[20,50,80])):
-            binary = np.uint8(channel > threshold)*255
-            for region in (binary,255-binary):
-                region = cv2.morphologyEx(region,cv2.MORPH_CLOSE,kernel)
-                binaries.append(cv2.morphologyEx(region,cv2.MORPH_OPEN,kernel))
-    candidates = []
-    for binary in binaries:
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for contour in contours:
-            perimeter = cv2.arcLength(contour, True)
-            polygon = cv2.approxPolyDP(contour, 0.02*perimeter, True)
-            area = cv2.contourArea(polygon)
-            points = polygon.reshape(-1,2)
-            inside = (points[:,0]>1).all() and (points[:,1]>1).all() and (points[:,0]<small.shape[1]-2).all() and (points[:,1]<small.shape[0]-2).all()
-            if len(polygon) == 4 and inside and cv2.isContourConvex(polygon) and 0.35*small.shape[0]*small.shape[1] < area < 0.98*small.shape[0]*small.shape[1]:
-                candidates.append((area, points/scale))
-    if not candidates:
-        return {'detected': False, 'corners': [[0,0],[width-1,0],[width-1,height-1],[0,height-1]]}
-    points = max(candidates, key=lambda item:item[0])[1]
-    center = points.mean(axis=0)
-    points = points[np.argsort(np.arctan2(points[:,1]-center[1], points[:,0]-center[0]))]
-    points = np.roll(points, -np.argmin(points.sum(axis=1)), axis=0)
-    points[:,0] = np.clip(points[:,0], 0, width-1)
-    points[:,1] = np.clip(points[:,1], 0, height-1)
-    return {'detected': True, 'corners': points.round(2).tolist()}
-
-
-def rectify(image, corners):
-    try:
-        points = np.asarray(corners, dtype=np.float32)
-    except (TypeError, ValueError):
-        raise ValueError('四角坐标无效。') from None
-    height, width = image.shape[:2]
-    if points.shape != (4,2) or not np.isfinite(points).all():
-        raise ValueError('请按左上、右上、右下、左下设置四个角。')
-    if (points < 0).any() or (points[:,0] >= width).any() or (points[:,1] >= height).any():
-        raise ValueError('四个角必须位于图片内。')
-    if not cv2.isContourConvex(points) or cv2.contourArea(points, oriented=True) <= max(100, width*height*0.01):
-        raise ValueError('四角不能交叉或重合，请沿单据边界顺时针设置。')
-    top, right, bottom, left = [np.linalg.norm(points[(i+1)%4]-points[i]) for i in range(4)]
-    if min(top, right, bottom, left) < 10:
-        raise ValueError('选择的单据区域过小。')
-    out_width, out_height = round(max(top,bottom))+1, round(max(left,right))+1
-    scale = min(1.0, 2200/max(out_width,out_height))
-    out_width, out_height = round(out_width*scale), round(out_height*scale)
-    target = np.float32([[0,0],[out_width-1,0],[out_width-1,out_height-1],[0,out_height-1]])
-    matrix = cv2.getPerspectiveTransform(points, target)
-    return cv2.warpPerspective(image, matrix, (out_width,out_height), flags=cv2.INTER_CUBIC, borderValue=(255,255,255))
+def align_text(image, boxes):
+    if boxes is None:
+        raise ValueError('未检测到清晰文字，无法判断文字方向，请换一张清晰图片。')
+    horizontal, vertical = [], []
+    for box in np.asarray(boxes,dtype=np.float32).reshape(-1,4,2):
+        top = ((box[1]-box[0])+(box[2]-box[3]))/2
+        side = ((box[3]-box[0])+(box[2]-box[1]))/2
+        if np.linalg.norm(top) < 1.5*np.linalg.norm(side):
+            continue
+        horizontal.append(np.degrees(np.arctan2(top[1],top[0])))
+        vertical.append(np.degrees(np.arctan2(side[0],side[1])))
+    if not horizontal:
+        raise ValueError('文字方向未能可靠判断，请上传包含清晰文字行的图片。')
+    h,v = float(np.median(horizontal)),float(np.median(vertical))
+    if np.percentile(horizontal,90)-np.percentile(horizontal,10)>5 or abs(h)>20 or abs(v)>20 or np.median(np.abs(np.array(horizontal)-h))>3 or np.median(np.abs(np.array(vertical)-v))>3:
+        raise ValueError('文字方向差异较大，无法可靠自动拉正，请重新拍摄。')
+    changed = max(abs(h),abs(v)) >= .35
+    height,width = image.shape[:2]
+    if not changed and max(height,width)<=2200:
+        return image, {'changed':False,'angle':h,'matrix':[[1,0,0],[0,1,0]]}
+    if not changed:
+        h=v=0
+    h,v = np.radians([h,v])
+    basis=np.array([[np.cos(h),np.sin(v)],[np.sin(h),np.cos(v)]])
+    transform=np.linalg.inv(basis)
+    frame=np.float32([[0,0],[width-1,0],[width-1,height-1],[0,height-1]])@transform.T
+    minimum=np.floor(frame.min(axis=0))
+    size=np.ceil(frame.max(axis=0))-minimum+1
+    matrix=np.column_stack((transform,-minimum))
+    scale=min(1.,2200/max(size))
+    matrix*=scale
+    out_width,out_height=np.ceil(size*scale).astype(int)
+    corrected=cv2.warpAffine(image,matrix,(out_width,out_height),flags=cv2.INTER_CUBIC,borderValue=(255,255,255))
+    return corrected, {'changed':changed,'angle':float(np.degrees(h)),'matrix':matrix.tolist()}
