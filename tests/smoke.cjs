@@ -9,9 +9,8 @@ async function post(endpoint,body,headers={}) {
 }
 async function photoResult(file,type) {
   const photo=fs.readFileSync(file);
-  const boundary=await (await post('corners',photo,{'Content-Type':type})).json();
-  assert.equal(boundary.detected,true);
-  const corrected=Buffer.from(await (await post('rectify',photo,{'Content-Type':type,'X-Document-Corners':JSON.stringify(boundary.corners)})).arrayBuffer());
+  const alignment=await post('align',photo,{'Content-Type':type});
+  const corrected=Buffer.from(await alignment.arrayBuffer());
   return (await post('recognize',corrected)).json();
 }
 (async () => {
@@ -25,11 +24,25 @@ async function photoResult(file,type) {
     ['A003','密封垫圈','50','6.00','300.00']
   ]);
   assert.match(sample.footer.join('\n'),/1250\.00/);
-  const projected=await photoResult(path.join(__dirname,'fixtures/perspective-purchase-order.png'),'image/png');
-  assert.deepEqual(projected.rows,sample.rows);
-  assert.match(projected.header.join('\n'),/PO20261019001/);
-  assert.match(projected.footer.join('\n'),/1250\.00/);
-  console.log('PASS: wireless purchase order, perspective correction, separate headings and totals');
+  const {execFileSync}=require('node:child_process');
+  const rotated=execFileSync(path.join(__dirname,'../.venv/bin/python'),['-c',`import cv2,sys
+im=cv2.imread('tests/fixtures/example-purchase-order.png')
+m=cv2.getRotationMatrix2D((800,525),7,1)
+im=cv2.warpAffine(im,m,(1800,1250),borderValue=(255,255,255))
+sys.stdout.buffer.write(cv2.imencode('.png',im)[1].tobytes())`],{cwd:path.join(__dirname,'..'),maxBuffer:15*1024*1024});
+  const aligned=await post('align',rotated);
+  const alignment=JSON.parse(aligned.headers.get('X-Alignment'));
+  assert.equal(alignment.changed,true);
+  assert.ok(Math.abs(Math.abs(alignment.angle)-7)<1);
+  const rotatedRows=await (await post('recognize',Buffer.from(await aligned.arrayBuffer()))).json();
+  assert.deepEqual(rotatedRows.rows,sample.rows);
+  console.log('PASS: real OCR rotates a 7-degree image without losing item rows');
+  const upright=await photoResult(path.join(__dirname,'fixtures/example-purchase-order.png'),'image/png');
+  assert.deepEqual(upright.rows,sample.rows);
+  const perspective=await fetch('http://127.0.0.1:8765/api/align',{method:'POST',headers:{'Content-Type':'image/png'},body:fs.readFileSync(path.join(__dirname,'fixtures/perspective-purchase-order.png'))});
+  assert.equal(perspective.status,422,'large variation in text direction must report an error rather than silently distort the page');
+  assert.match((await perspective.json()).error,/文字方向/);
+  console.log('PASS: upright borderless sample is accepted; strong perspective reports a text-direction error');
   if (process.argv[2]) {
     const actual=await photoResult(process.argv[2],'image/jpeg');
     assert.deepEqual(actual.header,['物资采购申请单']);
@@ -39,7 +52,7 @@ async function photoResult(file,type) {
     assert.match(actual.footer.join('\n'),/制单.*核批.*承办/);
     assert.ok(actual.footer.includes('红色日期标记：2012 11 19'));
     assert.ok(actual.warnings.some(text=>text.includes('重叠')));
-    console.log('PASS: actual photo -> full paper -> title + six columns + eight blank body rows + footer/date overlay');
+    console.log('PASS: actual photo -> text-direction check -> title + six columns + eight blank body rows + footer/date overlay');
   }
   if (process.argv[3]) {
     const book=XLSX.read(fs.readFileSync(process.argv[3]),{type:'buffer'});
