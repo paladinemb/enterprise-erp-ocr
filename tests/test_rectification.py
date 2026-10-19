@@ -44,6 +44,18 @@ class RectificationTests(unittest.TestCase):
         self.assertLess(np.max(np.linalg.norm(np.array(result['corners'])-self.corners, axis=1)), 8)
         self.assert_axes(rectify(self.photo, result['corners']))
 
+    def test_low_contrast_colored_page_does_not_crop_to_inner_table(self):
+        image = np.full((800,1000,3), (205,195,180), np.uint8)
+        paper = np.array([[60,55],[950,70],[950,735],[40,720]], np.int32)
+        cv2.fillConvexPoly(image, paper, (195,180,182))
+        for x in range(110,900,100):
+            cv2.line(image, (x,200), (x,650), (55,50,50), 2)
+        for y in range(200,651,50):
+            cv2.line(image, (110,y), (810,y), (55,50,50), 2)
+        result = detect_corners(image)
+        self.assertTrue(result['detected'])
+        self.assertLess(np.max(np.linalg.norm(np.array(result['corners'])-paper, axis=1)), 20)
+
     def test_blank_image_has_no_invented_boundary(self):
         result = detect_corners(np.full((300,400,3),255,np.uint8))
         self.assertFalse(result['detected'])
