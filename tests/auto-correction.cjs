@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-async function upload({detected = true, rectifyFails = false} = {}) {
+async function upload({changed = true, alignFails = false} = {}) {
   const elements = new Map();
   const element = id => {
     if (!elements.has(id)) elements.set(id, {
@@ -23,8 +23,7 @@ async function upload({detected = true, rectifyFails = false} = {}) {
     URL: {createObjectURL: () => 'blob:preview', revokeObjectURL() {}},
     fetch: async url => {
       calls.push(url);
-      if (url === '/api/corners') return {ok: true, json: async () => ({detected, corners: [[160,180],[1750,55],[1690,1320],[60,1130]]})};
-      if (url === '/api/rectify') return {ok: !rectifyFails, blob: async () => ({}), json: async () => ({error: '校正失败'})};
+      if (url === '/api/align') return {ok: !alignFails, headers: {get: () => JSON.stringify({changed,angle:changed?5:0})}, blob: async () => ({}), json: async () => ({error: '文字方向检查失败'})};
       throw Error('Unexpected request: ' + url);
     }
   });
@@ -35,20 +34,18 @@ async function upload({detected = true, rectifyFails = false} = {}) {
 
 (async () => {
   let result = await upload();
-  assert.deepEqual(result.calls, ['/api/corners', '/api/rectify'], 'upload must automatically rectify detected corners');
+  assert.deepEqual(result.calls, ['/api/align'], 'upload checks text directions without paper detection');
   assert.equal(result.element('recognize').disabled, false);
   assert.match(result.element('filemeta').textContent, /校正后/);
-  result = await upload({detected: false});
-  assert.deepEqual(result.calls, ['/api/corners'], 'uncertain boundaries must stop before rectification');
+  result = await upload({changed: false});
+  assert.deepEqual(result.calls, ['/api/align']);
+  assert.equal(result.element('recognize').disabled, false, 'upright borderless pictures must be allowed');
+  assert.match(result.element('status').textContent, /端正.*无需校正/);
+  result = await upload({alignFails: true});
   assert.equal(result.element('recognize').disabled, true);
   assert.equal(result.element('replace').disabled, false);
-  assert.match(result.element('status').textContent, /边界不可靠|校正失败/);
-  result = await upload({rectifyFails: true});
-  assert.equal(result.element('recognize').disabled, true);
-  assert.equal(result.element('replace').disabled, false);
-  assert.match(result.element('status').textContent, /边界不可靠|校正失败/);
-  assert.match(result.element('status').textContent, /校正失败/);
+  assert.match(result.element('status').textContent, /文字方向检查失败/);
   const html = fs.readFileSync(path.join(__dirname, '../dist/index.html'), 'utf8');
   assert.doesNotMatch(html, /id="(?:rectify|use-original|edit-corners)"|class="corner"/, 'no manual corner controls');
-  console.log('PASS: upload auto-correction, uncertain boundaries, and correction errors block recognition');
+  console.log('PASS: text alignment, straight borderless pictures, and alignment error recovery');
 })().catch(error => {console.error(error); process.exitCode = 1;});
