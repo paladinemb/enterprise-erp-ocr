@@ -65,7 +65,7 @@ $('addcol').onclick=()=>{const rows=readTable();if(!rows.length)rows.push([]);ro
 $('export').onclick=()=>{
   if(!window.XLSX){status('Excel 组件未加载，请刷新页面。',true);return;}
   const rows=readTable();if(!rows.length)return;
-  try{const sheet=XLSX.utils.aoa_to_sheet(exportRows($('doc-header').value,rows,$('doc-footer').value));sheet['!cols']=Array.from({length:Math.max(...rows.map(row=>row.length))},()=>({wch:22}));const book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,sheet,'识别结果');XLSX.writeFile(book,sourceName+'-识别结果.xlsx');status('已导出 Excel（文本单元格），编号前导零保持不变。');}catch(error){status('导出失败，请重试。',true);console.error(error);}
+  try{const sheet=exportSheet(XLSX,$('doc-header').value,rows,$('doc-footer').value);const book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,sheet,'识别结果');XLSX.writeFile(book,sourceName+'-识别结果.xlsx');status('已导出汇总表：抬头在左、明细在右、表尾在下；编号前导零保持不变。');}catch(error){status('导出失败，请重试。',true);console.error(error);}
 };
 $('demo').onclick=()=>{
   if(busy)return;const canvas=document.createElement('canvas');canvas.width=1600;canvas.height=1050;const c=canvas.getContext('2d');c.fillStyle='#c4c7c9';c.fillRect(0,0,1600,1050);c.fillStyle='white';c.fillRect(30,30,1540,990);c.fillStyle='#111';c.font='bold 54px sans-serif';c.textAlign='center';c.fillText('采购订单 PURCHASE ORDER',800,120);c.textAlign='left';c.font='32px sans-serif';c.fillText('订单编号 PO20261019001',100,220);c.fillText('日期 2026-10-19',100,285);c.fillText('供应商 示例工业设备有限公司',100,350);
