@@ -32,6 +32,26 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(len(grid['xs'])-1,6)
         self.assertEqual(len(grid['ys'])-1,9)
 
+    def test_perspective_invoice_with_broken_edges_and_outside_marks(self):
+        image = np.full((500,1000,3),230,np.uint8)
+        source = np.float32([[100,180],[940,180],[940,480],[100,480]])
+        target = np.float32([[115,187],[940,194],[974,482],[87,485]])
+        matrix = cv2.getPerspectiveTransform(source,target)
+        def line(a,b):
+            points=cv2.perspectiveTransform(np.float32([[a,b]]),matrix)[0].astype(int)
+            cv2.line(image,tuple(points[0]),tuple(points[1]),(30,30,30),1)
+        for x in [100,145,355,490,535,625,715,815,940]:
+            line((x,180),(x,480))
+        for y in range(180,481,30):
+            line((100,y),(940,y))
+        cv2.line(image,(70,7),(999,18),(30,30,30),2)
+        cv2.line(image,(650,493),(999,493),(30,30,30),2)
+        cv2.putText(image,'8',(20,470),cv2.FONT_HERSHEY_SIMPLEX,1,(30,30,30),2)
+        grid=find_grid(image)
+        self.assertIsNotNone(grid)
+        self.assertEqual(len(grid['xs'])-1,8)
+        self.assertEqual(len(grid['ys'])-1,10)
+
     def test_sections_follow_geometry_with_one_or_seven_heading_lines(self):
         for count in (1, 7):
             boxes = [[[10,y],[120,y],[120,y+10],[10,y+10]] for y in range(5, count*15, 15)]
