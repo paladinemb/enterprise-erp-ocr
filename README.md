@@ -18,6 +18,28 @@ python3.12 -m venv .venv
 不要再使用 `python3 -m http.server`：静态服务器没有识别接口。
 静态网页托管也无法单独运行此版本，需要同时部署 Python 服务。
 
+## Windows EXE
+
+GitHub Actions 的 **Build Windows EXE** 工作流在 Windows x64 / Python 3.12 环境打包并测试。
+从成功运行的 Artifacts 下载 `ERP-OCR-Windows-x64`，解压后双击 `ERP-OCR.exe`。
+程序自动打开默认浏览器；保持控制台窗口开启，关闭窗口即可退出识别服务。
+Python、网页资源和识别模型打包进单个 EXE，目标电脑无需安装 Python。
+启动时解压模型可能需要一段时间；服务仅监听随机本机端口，不占用开发服务的 8765 端口。
+当前版本未做 Windows 代码签名。
+
+也可在 Windows x64 安装 Python 3.12 后自行构建：
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements-lock.txt pyinstaller==6.22.3
+.venv\Scripts\python scripts/build_windows.py
+.venv\Scripts\python tests/smoke_executable.py release/ERP-OCR.exe
+```
+
+输出为 `release/ERP-OCR.exe`。构建时联网下载模型；使用程序时图片不外传。
+PyInstaller 要求在目标系统构建，不能直接用 macOS 生成 Windows EXE：
+[PyInstaller 官方说明](https://pyinstaller.org/en/stable/operating-mode.html)。
+
 ## 检查文字方向
 
 上传后根据 OCR 文字行的横向、纵向方向检查倾斜，不检测纸张边界，不自动裁掉图片。
