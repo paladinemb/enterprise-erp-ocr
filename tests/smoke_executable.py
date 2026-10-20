@@ -8,8 +8,8 @@ import threading
 from urllib.request import Request, urlopen
 
 
-def main(command):
-    process = subprocess.Popen(command + ['--no-browser'], stdout=subprocess.PIPE,
+def main(command, with_browser=False):
+    process = subprocess.Popen(command + ([] if with_browser else ['--no-browser']), stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
     lines = queue.Queue()
     def read_output():
@@ -50,4 +50,6 @@ def main(command):
 
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    command = sys.argv[1:]
+    with_browser = command[:1] == ['--with-browser']
+    main(command[1:] if with_browser else command, with_browser)

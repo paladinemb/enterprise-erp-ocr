@@ -6,6 +6,7 @@ on:
       - '.github/workflows/windows-exe.yml'
       - 'desktop.py'
       - 'scripts/build_windows.py'
+      - 'tests/smoke_executable.py'
 jobs:
   build:
     runs-on: windows-latest
@@ -28,3 +29,46 @@ jobs:
           path: release/ERP-OCR.exe
           if-no-files-found: error
           retention-days: 30
+  portable-test:
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [original, current]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ERP-OCR-Windows-x64
+          path: 'portable'
+          run-id: ${{ matrix.version == 'original' && '39351423979' || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Test normal startup and OCR with internet blocked
+        shell: pwsh
+        run: |
+          $python = (Get-Command python).Source
+          $testScript = Join-Path $pwd 'tests/smoke_executable.py'
+          $folder = Join-Path $env:RUNNER_TEMP '便携 程序'
+          New-Item -ItemType Directory -Force $folder | Out-Null
+          Copy-Item 'portable/ERP-OCR.exe' $folder
+          $exe = Join-Path $folder 'ERP-OCR.exe'
+          Get-FileHash $exe -Algorithm SHA256 | Format-List
+          Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled True
+          New-NetFirewallRule -DisplayName 'ERP OCR offline test' -Direction Outbound -Program $exe -Action Block -RemoteAddress '0.0.0.0-126.255.255.255','128.0.0.0-255.255.255.255','::/0' | Out-Null
+          Get-NetFirewallProfile | Select-Object Name,Enabled | Format-Table
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $env:TEMP = Join-Path $env:RUNNER_TEMP '离线 解压目录'
+          $env:TMP = $env:TEMP
+          New-Item -ItemType Directory -Force $env:TEMP | Out-Null
+          Set-Location $env:RUNNER_TEMP
+          & $python $testScript --with-browser $exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(msedge|chrome|firefox|iexplore)\.exe$' -and $_.CommandLine -match '127\.0\.0\.1' } | Select-Object Name,CommandLine | Format-List
