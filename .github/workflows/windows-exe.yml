@@ -1,0 +1,30 @@
+name: Build Windows EXE
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/windows-exe.yml'
+      - 'desktop.py'
+      - 'scripts/build_windows.py'
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - run: python -m pip install -r requirements-lock.txt pyinstaller==6.22.3
+      - run: python -m unittest discover -s tests -p "test_*.py"
+      - run: python scripts/build_windows.py
+      - run: python tests/smoke_executable.py release/ERP-OCR.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ERP-OCR-Windows-x64
+          path: release/ERP-OCR.exe
+          if-no-files-found: error
+          retention-days: 30
