@@ -1,6 +1,11 @@
 name: Build Windows EXE
 on:
   workflow_dispatch:
+    inputs:
+      compare_run_id:
+        description: 'Optional older build run ID to compare'
+        required: false
+        type: string
   push:
     paths:
       - '.github/workflows/windows-exe.yml'
@@ -39,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: [original, current]
+        version: ${{ fromJSON(inputs.compare_run_id != '' && '["original","current"]' || '["current"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -49,7 +54,7 @@ jobs:
         with:
           name: ERP-OCR-Windows-x64
           path: 'portable'
-          run-id: ${{ matrix.version == 'original' && '39351423979' || github.run_id }}
+          run-id: ${{ matrix.version == 'original' && inputs.compare_run_id || github.run_id }}
           github-token: ${{ github.token }}
       - name: Test normal startup and OCR with internet blocked
         shell: pwsh
@@ -62,7 +67,7 @@ jobs:
           $exe = Join-Path $folder 'ERP-OCR.exe'
           Get-FileHash $exe -Algorithm SHA256 | Format-List
           Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled True
-          New-NetFirewallRule -DisplayName 'ERP OCR offline test' -Direction Outbound -Program $exe -Action Block -RemoteAddress '0.0.0.0-126.255.255.255','128.0.0.0-255.255.255.255','::/0' | Out-Null
+          New-NetFirewallRule -DisplayName 'ERP OCR offline test' -Direction Outbound -Program $exe -Action Block -RemoteAddress Internet | Out-Null
           Get-NetFirewallProfile | Select-Object Name,Enabled | Format-Table
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
           $env:TEMP = Join-Path $env:RUNNER_TEMP '离线 解压目录'
