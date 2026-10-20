@@ -59,10 +59,11 @@ sys.stdout.buffer.write(cv2.imencode('.png',im)[1].tobytes())`],{cwd:path.join(_
     const sheet=book.Sheets['识别结果'];
     const rows=XLSX.utils.sheet_to_json(sheet,{header:1,defval:'',blankrows:true});
     assert.equal(rows[0][0],'物资采购申请单');
-    assert.deepEqual(rows[2],['编号','物资名称','规格型号','单位','数量','备注']);
-    assert.deepEqual(rows.slice(3,11).map(row=>row[0]),['1','2','3','4','5','6','7','8']);
-    assert.equal(sheet.A4.t,'s');
-    assert.match(rows.slice(12).map(row=>row.join(' ')).join('\n'),/制单.*核批.*承办/);
+    assert.deepEqual(rows[0].slice(1),['编号','物资名称','规格型号','单位','数量','备注']);
+    assert.deepEqual(rows.slice(1,9).map(row=>row[1]),['1','2','3','4','5','6','7','8']);
+    assert.equal(sheet.B2.t,'s');
+    assert.match(rows.slice(9).map(row=>row.join(' ')).join('\n'),/制单.*核批.*承办/);
+    assert.deepEqual(sheet['!merges'][0],{s:{r:9,c:0},e:{r:9,c:6}});
     console.log('PASS: browser XLSX export includes all sections and eight empty body rows');
   }
 })().catch(error=>{console.error(error);process.exitCode=1;});
