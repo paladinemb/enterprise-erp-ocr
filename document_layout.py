@@ -53,15 +53,17 @@ def find_grid(image, normalize=True):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 31, 15)
     horizontal = cv2.morphologyEx(binary, cv2.MORPH_OPEN, np.ones((1,max(25,width//20)), np.uint8))
-    vertical = cv2.morphologyEx(binary, cv2.MORPH_OPEN, np.ones((max(25,height//20),1), np.uint8))
+    vertical = cv2.morphologyEx(cv2.dilate(binary,np.ones((1,3),np.uint8)), cv2.MORPH_OPEN, np.ones((max(25,height//20),1), np.uint8))
     mask = cv2.dilate(horizontal | vertical, np.ones((3,3), np.uint8))
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    vertical_profile = cv2.dilate(vertical,np.ones((1,9),np.uint8))
+    horizontal_profile = cv2.dilate(horizontal,np.ones((5,1),np.uint8))
     for contour in sorted(contours, key=cv2.contourArea, reverse=True):
         x,y,w,h = cv2.boundingRect(contour)
         if w*h < width*height*.08:
             continue
-        xs = [x+p for p in _positions(np.count_nonzero(vertical[y:y+h,x:x+w], axis=0), h*.65)]
-        ys = [y+p for p in _positions(np.count_nonzero(horizontal[y:y+h,x:x+w], axis=1), w*.65)]
+        xs = [x+p for p in _positions(np.count_nonzero(vertical_profile[y:y+h,x:x+w], axis=0), h*.65)]
+        ys = [y+p for p in _positions(np.count_nonzero(horizontal_profile[y:y+h,x:x+w], axis=1), w*.65)]
         if len(xs) >= 3 and len(ys) >= 3:
             # Only use a rectangular grid when every row/column boundary spans it.
             if abs(xs[0]-x)>8 or abs(xs[-1]-(x+w))>8 or abs(ys[0]-y)>8 or abs(ys[-1]-(y+h))>8:
@@ -69,13 +71,44 @@ def find_grid(image, normalize=True):
             return {'xs': xs, 'ys': ys, 'bounds': (xs[0],ys[0],xs[-1],ys[-1])}
     if normalize:
         # Normalize the internal table grid for cell OCR; never crop the page preview.
+        candidates = []
+        # Broken/slanted outer edges can join page marks; repeated horizontal rules
+        # still define the table without pulling those marks into its columns.
+        rules, _ = cv2.findContours(horizontal,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+        rules = sorted([c for c in rules if cv2.boundingRect(c)[2] > width*.5],
+                       key=lambda c: cv2.boundingRect(c)[1])
+        if len(rules) >= 4:
+            typical_width = np.median([cv2.boundingRect(c)[2] for c in rules])
+            rules = [c for c in rules if cv2.boundingRect(c)[2] >= typical_width*.8]
+            centers = [cv2.boundingRect(c)[1]+cv2.boundingRect(c)[3]/2 for c in rules]
+            gap = np.median(np.diff(centers))
+            runs, run = [], []
+            for i, rule in enumerate(rules):
+                if run and not .65*gap <= centers[i]-centers[i-1] <= 1.5*gap:
+                    runs.append(run)
+                    run = []
+                run.append(rule)
+            runs.append(run)
+            for run in sorted(runs,key=len,reverse=True):
+                if len(run) < 4:
+                    continue
+                widths = [cv2.boundingRect(c)[2] for c in run]
+                if min(widths) < .8*max(widths):
+                    continue
+                ends = []
+                for rule in (run[0],run[-1]):
+                    pixels = rule.reshape(-1,2)
+                    ends.append([pixels[pixels[:,0] <= pixels[:,0].min()+3].mean(axis=0),
+                                 pixels[pixels[:,0] >= pixels[:,0].max()-3].mean(axis=0)])
+                candidates.append(np.float32([ends[0][0],ends[0][1],ends[1][1],ends[1][0]]))
         for contour in sorted(contours,key=cv2.contourArea,reverse=True):
             if cv2.contourArea(contour)<width*height*.08:
                 continue
             polygon=cv2.approxPolyDP(contour,.02*cv2.arcLength(contour,True),True)
             if len(polygon)!=4 or not cv2.isContourConvex(polygon):
                 continue
-            points=polygon.reshape(4,2).astype(np.float32)
+            candidates.append(polygon.reshape(4,2).astype(np.float32))
+        for points in candidates:
             center=points.mean(axis=0)
             points=points[np.argsort(np.arctan2(points[:,1]-center[1],points[:,0]-center[0]))]
             points=np.roll(points,-np.argmin(points.sum(axis=1)),axis=0)
@@ -112,24 +145,27 @@ def read_grid(image, grid, ocr):
     xs, ys = grid['xs'], grid['ys']
     # shortcut: empty narrow strips between double rules are treated as border spacing.
     # Preserve narrow columns containing text; use structure models for merged grids.
+    # Tight invoice rows need less erasure to preserve digits beside the rules.
+    compact = min(np.diff(ys)) < 40
+    inset, rule_width = (3,3) if compact else (5,9)
     mask = np.zeros(image.shape[:2],np.uint8)
     for x in xs:
-        cv2.line(mask,(x,ys[0]),(x,ys[-1]),255,9)
+        cv2.line(mask,(x,ys[0]),(x,ys[-1]),255,rule_width)
     for y in ys:
-        cv2.line(mask,(xs[0],y),(xs[-1],y),255,9)
+        cv2.line(mask,(xs[0],y),(xs[-1],y),255,rule_width)
     clean = cv2.inpaint(image,mask,3,cv2.INPAINT_TELEA)
     gaps = np.diff(xs)
     remove = set()
     for i,gap in enumerate(gaps):
         if 0 < i < len(gaps)-1 and gap < np.median(gaps)*.45:
-            if all(text_crop(clean[a+5:b-5,xs[i]+5:xs[i+1]-5]) is None for a,b in zip(ys,ys[1:])):
+            if all(text_crop(clean[a+inset:b-inset,xs[i]+inset:xs[i+1]-inset]) is None for a,b in zip(ys,ys[1:])):
                 remove.add(i)
     xs = [x for i,x in enumerate(xs) if i not in remove]
     rows, warnings = [], []
     for r,(top,bottom) in enumerate(zip(ys,ys[1:])):
         row = []
         for c,(left,right) in enumerate(zip(xs,xs[1:])):
-            cell = text_crop(clean[top+5:bottom-5,left+5:right-5])
+            cell = text_crop(clean[top+inset:bottom-inset,left+inset:right-inset])
             text = ''
             if cell is not None:
                 output = ocr(cell, use_det=False, use_cls=False)
