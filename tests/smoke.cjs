@@ -58,12 +58,15 @@ sys.stdout.buffer.write(cv2.imencode('.png',im)[1].tobytes())`],{cwd:path.join(_
     const book=XLSX.read(fs.readFileSync(process.argv[3]),{type:'buffer'});
     const sheet=book.Sheets['识别结果'];
     const rows=XLSX.utils.sheet_to_json(sheet,{header:1,defval:'',blankrows:true});
-    assert.equal(rows[0][0],'物资采购申请单');
+    assert.equal(rows[0][0],'单据名称');
+    assert.equal(rows[1][0],'物资采购申请单');
     assert.deepEqual(rows[0].slice(1),['编号','物资名称','规格型号','单位','数量','备注']);
     assert.deepEqual(rows.slice(1,9).map(row=>row[1]),['1','2','3','4','5','6','7','8']);
     assert.equal(sheet.B2.t,'s');
-    assert.match(rows.slice(9).map(row=>row.join(' ')).join('\n'),/制单.*核批.*承办/);
-    assert.deepEqual(sheet['!merges'][0],{s:{r:9,c:0},e:{r:9,c:6}});
+    assert.deepEqual(rows.slice(9,12).map(row=>row[0]),['制单','核批','承办']);
+    assert.equal(rows[12][0],'红色日期标记');
+    assert.equal(rows[12][1],'2012 11 19');
+    assert.deepEqual(sheet['!merges'][0],{s:{r:9,c:1},e:{r:9,c:6}});
     console.log('PASS: browser XLSX export includes all sections and eight empty body rows');
   }
 })().catch(error=>{console.error(error);process.exitCode=1;});
