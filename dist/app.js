@@ -64,7 +64,7 @@ $('drop').ondragleave=()=>$('drop').classList.remove('over');
 $('drop').ondrop=e=>{e.preventDefault();$('drop').classList.remove('over');select(e.dataTransfer.files[0]);};
 $('recognize').onclick=async()=>{
   if(!selected||busy)return;
-  busy=true;['recognize','replace','demo','addrow','addcol','rebuild','export','raw','add-header','add-footer'].forEach(id=>$(id).disabled=true);setFieldsEditable(false);$('progress').style.display='block';$('progress').removeAttribute('value');status('正在识别文字与表格结构，首次运行需下载模型…');
+  busy=true;['recognize','replace','demo','addrow','addcol','rebuild','export','raw','add-header','add-footer'].forEach(id=>$(id).disabled=true);setFieldsEditable(false);$('progress').style.display='block';$('progress').removeAttribute('value');status('正在识别文字与表格结构，首次识别需加载 OXR 模型…');
   try{
     const response=await fetch('/api/recognize',{method:'POST',headers:{'Content-Type':selected.type},body:selected});
     if(response.status===501||response.status===404)throw Error('请使用 Python 识别服务启动程序，当前服务只提供静态页面。');
@@ -74,7 +74,7 @@ $('recognize').onclick=async()=>{
     renderFields('doc-header',headerFields((data.header||[]).join('\n')));renderFields('doc-footer',footerFields((data.footer||[]).join('\n')));
     $('doc-header-section').hidden=$('doc-footer-section').hidden=false;
     $('warnings').textContent=(data.warnings||[]).join('\n');$('warnings').hidden=!data.warnings?.length;
-    render(data.rows,data.header_rows||0);status('识别完成，已按位置区分单据抬头、表头、表体和表尾，请校对后导出。');$('progress').value=1;
+    render(data.rows,data.header_rows||0);status('识别完成，已识别表格并按字段分区，请校对后导出。');$('progress').value=1;
   }catch(error){console.error(error);status(error.message==='Failed to fetch'?'无法连接本地识别服务，请确认服务正在运行。':error.message,true);}
   finally{busy=false;['recognize','replace','demo','addrow','addcol','rebuild','raw','add-header','add-footer'].forEach(id=>$(id).disabled=false);setFieldsEditable(true);$('export').disabled=!readTable().length;}
 

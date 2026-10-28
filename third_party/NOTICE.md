@@ -1,12 +1,10 @@
 # Third-party components
 
-This integration uses the published packages from
-[RapidAI/TableStructureRec](https://github.com/RapidAI/TableStructureRec):
-`wired-table-rec 1.2.0`, `lineless-table-rec 0.1.0`, `table-cls 1.2.0`.
-Their Apache-2.0 license is retained in `TableStructureRec-LICENSE`.
-OCR is provided by [RapidAI/RapidOCR](https://github.com/RapidAI/RapidOCR), version 2.1.0.
-The packages load their upstream ONNX models on first use; model artifacts are
-not redistributed by this repository. See upstream repositories for model provenance.
+- SoMark OXR-1.0: https://huggingface.co/SoMarkAI/OXR-1.0 ; revision c708407f9d2b4df658f2543d9132b62bb7221df4. OXR License (Apache-2.0 with additional commercial and hosted-service terms), retained in OXR-LICENSE. Weights are downloaded separately.
+- MLX-VLM / MLX: https://github.com/Blaizzy/mlx-vlm and https://github.com/ml-explore/mlx ; MIT. MLX-VLM source revision is pinned in requirements.txt.
+- OpenCV: https://github.com/opencv/opencv ; Apache-2.0.
+- Pillow: https://github.com/python-pillow/Pillow ; HPND/PIL license.
+- NumPy: https://github.com/numpy/numpy ; BSD-3-Clause.
+- SheetJS CE 0.20.3: https://git.sheetjs.com/sheetjs/sheetjs ; Apache-2.0. The bundled file retains its license header.
 
-The existing frontend uses SheetJS CE 0.20.3 (Apache-2.0).
-The bundled legacy Tesseract.js files remain in dist/vendor but are no longer loaded.
+RapidOCR / TableStructureRec are no longer used in this Mac version. Historical TableStructureRec attribution is retained in TableStructureRec-LICENSE. Legacy Tesseract runtime and weights are removed from the current source tree.

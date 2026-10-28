@@ -1,6 +1,10 @@
 .venv/
+.venv-oxr/
 __pycache__/
 *.pyc
-.DS_Store
-build/
+.env
+models/
 release/
+build/
+oxr-probe.txt
+启动企业OCR.command

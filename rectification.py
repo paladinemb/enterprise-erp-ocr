@@ -37,3 +37,27 @@ def align_text(image, boxes):
     out_width,out_height=np.ceil(size*scale).astype(int)
     corrected=cv2.warpAffine(image,matrix,(out_width,out_height),flags=cv2.INTER_CUBIC,borderValue=(255,255,255))
     return corrected, {'changed':changed,'angle':float(np.degrees(h)),'matrix':matrix.tolist()}
+
+
+def text_boxes(image):
+    """Estimate text-line angles using image morphology, without legacy OCR weights."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    ink = cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY_INV,31,15)
+    height,width = gray.shape
+    for kernel in (np.ones((1,max(40,width//12)),np.uint8), np.ones((max(40,height//12),1),np.uint8)):
+        ink = cv2.subtract(ink,cv2.morphologyEx(ink,cv2.MORPH_OPEN,kernel))
+    joined = cv2.dilate(ink,np.ones((3,max(9,width//80)),np.uint8))
+    contours,_ = cv2.findContours(joined,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+    boxes=[]
+    for contour in contours:
+        (x,y),(w,h),angle = cv2.minAreaRect(contour)
+        if w < h:
+            w,h,angle=h,w,angle+90 if angle < 0 else angle-90
+        if w < max(25,width*.03) or h < 5 or w < 2*h or h > height*.15:
+            continue
+        a=np.radians(angle)
+        along=np.array([np.cos(a),np.sin(a)])*w/2
+        down=np.array([-np.sin(a),np.cos(a)])*h/2
+        center=np.array([x,y])
+        boxes.append([center-along-down,center+along-down,center+along+down,center-along+down])
+    return np.array(boxes) if boxes else None

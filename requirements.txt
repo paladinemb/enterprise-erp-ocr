@@ -1,5 +1,5 @@
-wired-table-rec==1.2.0
-lineless-table-rec==0.1.0
-table-cls==1.2.0
-rapidocr==2.1.0
-opencv-python>=4.10,<5
+# Apple Silicon Mac, Python 3.12, macOS 26+
+mlx-vlm @ https://github.com/Blaizzy/mlx-vlm/archive/230fc308efb577d87446306bfb8a3e9f1a129558.zip
+opencv-python==4.14.0.94
+pillow==13.0.0
+numpy==2.5.4

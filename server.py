@@ -1,4 +1,4 @@
-"""Local TableStructureRec service; run with .venv/bin/python server.py."""
+"""Local SoMark OXR service; run with .venv/bin/python server.py."""
 import io
 import json
 import logging
@@ -12,7 +12,6 @@ from document_layout import group_lines, find_grid, split_sections, read_grid, h
 ROOT = Path(__file__).resolve().parent
 MAX_BYTES = 15 * 1024 * 1024
 LOCK = threading.Lock()
-ENGINES = {}
 
 
 def html_rows(html):
@@ -59,67 +58,37 @@ def html_rows(html):
 
 
 def align(image):
-    from rapidocr import RapidOCR
-    from rectification import align_text
-    if 'ocr' not in ENGINES:
-        ENGINES['ocr'] = RapidOCR(params={'Global.max_side_len':1280})
-    output = ENGINES['ocr'](image, use_rec=False, use_cls=False)
-    return align_text(image, output.boxes)
+    from rectification import align_text, text_boxes
+    return align_text(image, text_boxes(image))
 
 
 def recognize(image):
-    from rapidocr import RapidOCR
-    from table_cls import TableCls
-    from wired_table_rec.main import WiredTableInput, WiredTableRecognition
-    from lineless_table_rec.main import LinelessTableInput, LinelessTableRecognition
-
-    if 'ocr' not in ENGINES:
-        ENGINES['ocr'] = RapidOCR(params={'Global.max_side_len':1280})
-    output = ENGINES['ocr'](image)
-    if output.boxes is None or not output.txts:
-        raise ValueError('未识别到文字，请换一张清晰、端正的单据。')
-    grid = find_grid(image)
-    warnings = []
-    if grid:
-        bounds = grid['bounds']
-        rows, warnings = read_grid(grid.get('image',image), grid, ENGINES['ocr'])
-        kind, engine = 'wired', 'RapidOCR + Grid'
-    else:
-        if 'classifier' not in ENGINES:
-            ENGINES['classifier'] = TableCls()
-        bounds = lineless_bounds(output.boxes, output.txts, image.shape)
-        left, top, right, bottom = bounds
-        cropped = image[top:bottom,left:right]
-        ocr_result = []
-        for box, text, score in zip(output.boxes, output.txts, output.scores):
-            center_y = sum(p[1] for p in box)/4
-            if top <= center_y <= bottom:
-                shifted = box.copy()
-                shifted[:,0] -= left
-                shifted[:,1] -= top
-                ocr_result.append([shifted, text, score])
-        kind, _ = ENGINES['classifier'](cropped)
-        if kind not in ENGINES:
-            ENGINES[kind] = (WiredTableRecognition(WiredTableInput()) if kind == 'wired'
-                             else LinelessTableRecognition(LinelessTableInput()))
-        result = ENGINES[kind](cropped, ocr_result=ocr_result)
-        rows = html_rows(result.pred_html or '')
-        while rows and not any(rows[0]):
-            rows.pop(0)
-        while rows and not any(rows[-1]):
-            rows.pop()
-        engine = 'TableStructureRec'
+    from oxr_backend import read, table_rows
+    from document_layout import LABEL, FOOTER
+    full_text = read(image)
+    rows = table_rows(read(image, 'table'))
+    lines = [line.strip() for line in full_text.splitlines() if line.strip()]
+    # shortcut: without the official layout model, unruled sections use field labels; review unusual layouts.
+    start = next((i for i,line in enumerate(lines) if len(LABEL.findall(line)) >= 2), None)
+    end = next((i for i,line in enumerate(lines) if i > (start if start is not None else -1)
+                and FOOTER.search(line)), len(lines))
+    header = lines[:start] if start is not None else []
+    footer = lines[end:]
+    normalize = lambda text: ''.join(text.split())
+    sections = {normalize(line) for line in header+footer}
+    while rows and len([cell for cell in rows[0] if cell]) == 1 and normalize(''.join(rows[0])) in sections:
+        rows.pop(0)
+    while rows and len([cell for cell in rows[-1] if cell]) == 1 and normalize(''.join(rows[-1])) in sections:
+        rows.pop()
     if not rows:
-        raise ValueError('未检测到表格结构，请使用清晰、端正的表格图片。')
-    header, footer = split_sections(output.boxes, output.txts, bounds)
-    footer, footer_warnings = read_footer(image, bounds[3], footer, ENGINES['ocr'])
-    warnings.extend(footer_warnings)
-    header_rows = header_row_count(rows)
-    if not header_rows:
-        warnings.append('未可靠确认列名，表格按原始行列保留，请核对表头。')
-    return {'header': header, 'rows': rows, 'footer': footer, 'header_rows': header_rows,
-            'warnings': warnings, 'text': '\n'.join('\t'.join(row) for row in rows),
-            'engine': engine, 'table_type': kind}
+        raise ValueError('未识别到表格明细，请核对原图。')
+    warnings = ['OXR 生成结果需核对编号、数量和金额；未提供逐字置信度。',
+                '本机版本未接入官方布局模型，抬头和表尾按字段分段，请与原图核对。']
+    if start is None:
+        warnings.append('未可靠区分抬头与表体，完整识别文字已保留在下方文本区。')
+    return {'header': header, 'rows': rows, 'footer': footer,
+            'header_rows': header_row_count(rows), 'warnings': warnings,
+            'text': full_text, 'engine': 'SoMark OXR-1.0 / MLX', 'table_type': 'oxr'}
 
 
 def read_footer(image, bottom, fallback, ocr):
@@ -215,7 +184,7 @@ class Handler(SimpleHTTPRequestHandler):
         except ValueError as error:
             self.reply(422, {'error': str(error)})
         except Exception:
-            logging.exception('TableStructureRec inference failed')
+            logging.exception('OXR inference failed')
             self.reply(500, {'error': '表格识别失败，请检查本地服务终端的模型加载或推理错误。'})
         finally:
             LOCK.release()
